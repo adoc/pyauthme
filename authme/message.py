@@ -5,71 +5,257 @@ Author: github.com/adoc
 
 """
 import os
-import base64
-import json as _json
-import functools
-import collections
-import whmac
+
+import uuid
+
+import authme.hmac
+import authme.exc
+import authme.codecs
 
 
-# Don't really need these anymore.
-b64encode = lambda t: base64.b64encode(t)
-b64decode = lambda t: base64.b64decode(t)
-
-
-# http://stackoverflow.com/a/13520518
-class DotDict(dict):
-    """
-    a dictionary that supports dot notation 
-    as well as dictionary access notation 
-    usage: d = DotDict() or d = DotDict({'val1':'first'})
-    set attributes: d.val2 = 'second' or d['val2'] = 'second'
-    get attributes: d.val2 or d['val2']
-    """
-    __getattr__ = dict.__getitem__
-    __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
-
-    def __init__(self, dct={}):
-        for key, value in dct.items():
-            if hasattr(value, 'keys'):
-                value = DotDict(value)
-            self[key] = value
-
-
-json = DotDict()
-# Provides consistency for serialization/hashing.
-json.dumps = functools.partial(_json.dumps, separators=(',', ':'))
-json.loads = functools.partial(_json.loads,
-                                object_pairs_hook=collections.OrderedDict)
-
-
-# Exceptions
-# ==========
-class AuthException(Exception):
-    """
-    Base message authentication exception.
-    """
+random_func = None
+try:
+    import cryptu.random
+except NameError:
     pass
+else:
+    random_func = cryptu.random.read
 
 
-class ClientBad(AuthException):
+class Remotes(object):
     """
-    Client wasn't found in the data model.
+
+    get
+    update
+    remove
     """
-    pass
+    # more or less a "defaultdict"? refactor?
+    __default_remote = {'secret': None,
+                        'key': None,
+                        'tight': False}
+
+    def __init__(self, remotes={}, random_id_func=uuid.uuid4):
+        self.random_id_func = random_id_func
+
+        self._remotes = {}
+        for k, v in remotes.items():
+            self.update(k, v)
+
+    def add(self, id=None, vals={}):
+        if not id:
+            id = self.random_id_func()
+        return id, self.update(id, vals)
+
+    def get(self, id_):
+        if not id_ in self._remotes:
+            raise authme.exc.MessageClientBad("Remote id %s is not a valid "
+                                              "client." % id_)
+        return self._remotes[id_]
+
+    def update(self, id_, val):
+        remote = self.__default_remote.copy()
+        remote.update(val)
+        self._remotes.update({id_: remote})
+        return remote
+
+    def remove(self, id_):
+        if not id_ in self._remotes:
+            raise authme.exc.MessageClientBad("Remote id %s is not a valid "
+                                              "client." % id_)
+        del self._remotes[id_]
+
+    def __contains__(self, id_):
+        return id_ in self._remotes
+
+
+class PassSigner:
+    @classmethod
+    def sign(cls, val, *args):
+        return None
+
+    @classmethod
+    def verify(cls, val, *args):
+        return True
+
+
+class PassCipher:
+    iv = None
+    @classmethod
+    def encrypt(cls, val):
+        if isinstance(val, str):
+            return val.encode()
+        else:
+            return val
+
+    @classmethod
+    def decrypt(cls, val):
+        return val
+
+
+class PassWrapper:
+    @classmethod
+    def pre_send(cls, *args):
+        return args
+
+    @classmethod
+    def post_send(cls, *args):
+        return args
+
+    @classmethod
+    def pre_receive(cls, *args):
+        return args
+
+    @classmethod
+    def post_receive(cls, payload):
+        return payload
+
+
+class Message:
+    """Message state object.
+    """
+    def __init__(self, payload=None, signer=None, signing_params=None, cipher=None):
+        """
+        """
+        self._payload = payload
+        self._signer = signer or PassSigner
+        self._signing_params = signing_params or ()
+        self._cipher = cipher or PassCipher
+
+        setattr(self.__class__, 'payload', property(self.__class__.get_payload,
+                                                    self.__class__.set_payload))
+        setattr(self.__class__, 'signing_params', property(
+                                                    self.__class__.get_signing_params,
+                                                    self.__class__.set_signing_params))
+
+    def get_payload(self):
+        """
+        """
+        return self._payload
+
+    def set_payload(self, value):
+        """
+        """
+        assert isinstance(value, bytes), "`payload` requires bytes."
+        self._payload = value
+
+    def get_signing_params(self):
+        return self._signing_params
+
+    def set_signing_params(self, value):
+        assert isinstance(value, tuple), "`signing_params` requires a tuple value."
+        self._signing_params = value
+
+    def send(self):
+        #body = self.cipher.encrypt(authme.codecs.JsonArgCodec.encode(self.payload))
+        body = self._cipher.encrypt(self.payload)
+        signature = self._signer.sign(body, self._cipher.iv, *tuple(self.signing_params))
+        return body, self._cipher.iv, signature
+        #      ctext, nonce, signature
+
+    def receive(self, body, nonce, signature):
+        if self._signer.verify(signature, body, nonce, *self.signing_params) is True:
+            #self.payload = authme.codecs.JsonArgCodec.decode(
+            #                    self.cipher.decrypt(ctext))
+            payload = self._cipher.decrypt(body)
+            if payload:
+                self.payload = payload
+                return self._payload
+            else:
+                raise NotImplementedError('Cipher failed to decrypt body.')
+        else:
+            raise NotImplementedError('Signature failed but signer didnt throw'
+                                        'an error.')
+
+
+class JsonMessage(Message):
+    def get_payload(self):
+        return authme.codecs.JsonArgCodec.encode(self._payload)[0].encode()
+
+    def set_payload(self, value):
+        self._payload = authme.codecs.JsonArgCodec.decode(value)[0]
+
+
+class Message_old:
+    """
+    """
+    def __init__(self, signer=None, cipher=None):
+        """
+        `signer` exposes .sign and .verify.
+        `cipher` exposes .encrypt and .decrypt
+        """
+        self.signer = signer or PassSigner
+        self.cipher = cipher or PassCipher
+
+    def __type_check(self, payload, *args):
+        if not isinstance(payload, bytes):
+            raise TypeError("`payload` must be bytes.")
+        for arg in args:
+            if arg and not isinstance(arg, bytes):
+                raise TypeError("Additional signer args must be bytes.")
+
+
+    def send(self, payload, *signing_params):
+        """
+        Prepare a message for sending.
+        Returns cipher_text and signature.
+        """
+        self.__type_check(payload, *signing_params)
+
+        payload, *signing_params = self.wrapper.pre_send(payload,
+                                                         *signing_params)
+
+        payload = self.cipher.encrypt(payload)
+        
+        return self.wrapper.post_send(payload, self.signer.sign(payload,
+                                                            *signing_params))
+
+    def receive(self, payload, challenge, *signer_params):
+        """
+        Process a received message.
+        """
+        self.__type_check(payload, challenge, *signer_params)
+
+        payload, challenge, *signer_params = self.wrapper.pre_receive(payload,
+                                                    challenge, *signer_params)
+
+        if not self.signer.verify(challenge, payload, *signer_params):
+            raise NotImplementedError('Signature failed but signer didnt throw'
+                                        'an error.')
+        payload = self.cipher.decrypt(payload)
+
+        return self.wrapper.post_receive(payload)
+
+
+
+class AuthnMessage:
+    """
+    """
+    def __init__(self, signer_cls, cipher_cls=None, wrapper=None,
+                 random_func=random_func):
+        self.signer_cls = signer_cls
+        self.cipher_cls = cipher_cls
+        self.wrapper = wrapper
+        self.random_func = random_func or os.urandom
+
+    def send(self, secret, payload, *signing_params, **kwa):
+        cipher_key = kwa.get('key')
+        nonce = kwa.get('nonce', self.random_func(16))
+
+        cipher = self.cipher_cls and self.cipher_cls(cipher_key, nonce)
+        message = Messaging(signer=self.signer_cls(signing_secret),
+                          cipher=cipher, wrapper=self.wrapper)
+
+        return (nonce,) + message.send(payload, nonce, *signing_params)
 
 
 def NonePass(*args, **kwa):
-    """
-    Dummy object.
+    """Dummy object.
     """
     return None
 
 
-class Message(object):
-    """
-    Just a simple packaging for messages that will hook in a `signer` and
+class _Message(object):
+    """Just a simple packaging for messages that will hook in a `signer` and
     a `cipher`.
 
     `wrapper` must expose .pre_send, .post_send, .pre_receive and .post_receive
@@ -82,8 +268,7 @@ class Message(object):
         self.cipher = cipher
 
     def wrapped(func):
-        """
-        Decorator to hook `wrapper` methods before and after decorated function.
+        """Decorator to hook `wrapper` methods before and after decorated function.
         """
         def _inner(self, *args):
             if self.wrapper:
@@ -122,6 +307,8 @@ class Message(object):
         """
         Process a received message.
         """
+        print("receive")
+        print(payload, challenge, args)
         if self.signer and not self.signer.verify(challenge, payload, *args):
             raise NotImplementedError('Signature failed but signer didnt throw'
                                         'an error.')
@@ -132,7 +319,7 @@ class Message(object):
 
 
 class JsonWrapper(object):
-    def __init__(self, json=json):
+    def __init__(self, json=authme.codecs.json):
         self._json = json
 
     def pre_send(self, payload, *args):
@@ -144,7 +331,6 @@ class JsonWrapper(object):
             payload = payload.decode()
         except UnicodeDecodeError:
             payload = b64encode(payload)
-
         return (payload, b64encode(challenge)) + args
 
     def pre_receive(self, payload, challenge, *args):
@@ -160,58 +346,20 @@ class JsonWrapper(object):
         return self._json.loads(payload.decode())
 
 
-Remote = {'secret': None,
-            'key': None,
-            'tight': False }
-
-class Remotes(object):
-    """
-
-    get
-    update
-    remove
-    """
-    def __init__(self, remotes=None):
-        _remotes = remotes or {}
-        for k,v in _remotes.items():
-            remote = Remote.copy()
-            remote.update(v)
-            _remotes[k] = remote
-        self._remotes = _remotes
-        print (self._remotes)
-
-
-    def get(self, id_):
-        if not id_ in self._remotes:
-            raise ClientBad("Remote id %s is not a valid client." % id_)
-
-        return self._remotes[id_]
-
-    def update(self, id_, val):
-        remote = Remote.copy()
-        remote.update(val)
-        self._remotes.update({id_: remote})
-
-    def remove(self, id_):
-        if not id_ in self._remotes:
-            raise ClientBad("Remote id %s is not a valid client." % id_)
-
-        del self._remotes[id_]
-
-
-    def __contains__(self, id_):
-        return id_ in self._remotes
-
 
 class AuthApi(object):
     """
     """
     def __init__(self, sender_id, remotes=Remotes(), message_wrapper=NonePass,
-                    signer_cls=whmac.TimedHmac, cipher_cls=NonePass, time_provider=whmac.time_provider):
+                    signer_cls=authme.hmac.TimedHmac, cipher_cls=NonePass,
+                    time_provider=authme.hmac.time_provider):
         """
         """
         self.sender_id = sender_id
-        self.remotes = remotes
+        if isinstance(remotes, Remotes):
+            self.remotes = remotes
+        else:
+            self.remotes = Remotes(remotes)
         self._message_wrapper = message_wrapper
         self._signer_cls = signer_cls
         self._cipher_cls = cipher_cls
@@ -230,13 +378,14 @@ class AuthApi(object):
         secret = remote['secret']
         key = remote['key']
 
-        nonce = base64.b64encode(os.urandom(16))
+        #nonce = base64.b64encode(os.urandom(16))
+        nonce = os.urandom(16)
 
         wrapper = self._message_wrapper()
         signer = self._signer_cls(secret, time_provider=self.time_provider)
         cipher = self._cipher_cls(key, nonce)
 
-        message = Message(wrapper=wrapper, signer=signer, cipher=cipher)
+        message = Messaging(wrapper=wrapper, signer=signer, cipher=cipher)
 
         return (nonce,) + message.send(payload, self.sender_id, nonce, *args)
         
@@ -252,7 +401,7 @@ class AuthApi(object):
         signer = self._signer_cls(secret, expiry=expiry)
         cipher = self._cipher_cls(key, nonce)
 
-        message = Message(wrapper=wrapper, signer=signer, cipher=cipher)
+        message = Messaging(wrapper=wrapper, signer=signer, cipher=cipher)
 
         return message.receive(payload, challenge, remote_id, nonce, *args)
         
@@ -261,7 +410,7 @@ class JsonAuthApi(AuthApi):
     """
     """
     def __init__(self, *args, **kwa):
-        kwa['message_wrapper'] = JsonWrapper
+        #kwa['message_wrapper'] = JsonWrapper
         AuthApi.__init__(self, *args, **kwa)
 
     def send(self, remote_id, payload, *args):
@@ -276,64 +425,6 @@ class JsonAuthApi(AuthApi):
     def receive(self, packet, *args, expiry=600):
         """
         """
-        
-        return AuthApi.receive(self, packet['sender_id'].encode(), packet['nonce'].encode(), packet['signature'],
+        print(packet)
+        return AuthApi.receive(self, packet['sender_id'], packet['nonce'], packet['signature'],
                                 packet['payload'], *args, expiry=expiry)
-
-
-# Just convenient to include the tests here for now.
-import unittest
-
-class TestMessage(unittest.TestCase):
-
-    def test_temporary_message(self):
-        # Not a real test, just some dev code.
-        import message
-        import aes
-        import whmac
-
-        a = message.Message(signer=whmac.TimedHmac(b'12345', expiry=1),
-                                cipher=aes.Aes(*aes.gen_keyiv()))
-
-        msg = b'a'
-        payload, sig = a.send(msg)
-        assert a.receive(payload, sig)
-
-    def test_temporary_auth_api(self):
-        # Not a real test, just some dev code.
-        import message
-        import aes
-
-        a = message.AuthApi(b'server1',
-                            {b'client1': ('12345678901234567890123456789012',
-                                        '12345678901234567890123456789012')})
-
-        b = message.AuthApi(b'client1',
-                            {b'server1': ('12345678901234567890123456789012',
-                                        '12345678901234567890123456789012')})
-        nonce, payload, signature = a.send(b'client1', b'123456')
-        assert b.receive(b'server1', nonce, signature, payload)
-
-
-        a = message.JsonAuthApi(b'server1',
-                            {b'client1': ('12345678901234567890123456789012',
-                                        '12345678901234567890123456789012')})
-
-        b = message.JsonAuthApi(b'client1',
-                            {b'server1': ('12345678901234567890123456789012',
-                                        '12345678901234567890123456789012')})
-
-        package = a.send(b'client1', {'this':'123456'})
-        assert  b.receive(b'server1', package)
-
-
-        a = message.JsonAuthApi(b'server1',
-                            {b'client1': ('12345678901234567890123456789012',
-                                        '12345678901234567890123456789012')},
-                            cipher_cls=aes.Aes)
-        b = message.JsonAuthApi(b'client1',
-                            {b'server1': ('12345678901234567890123456789012',
-                                        '12345678901234567890123456789012')},
-                            cipher_cls=aes.Aes)
-        package = a.send(b'client1', {'this':'123456'})
-        assert  b.receive(b'server1', package) == {'this':'123456'}

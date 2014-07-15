@@ -11,18 +11,7 @@ Location: https://gist.github.com/adoc/8552289
 import time
 import hashlib
 import hmac
-
-
-class SignatureException(Exception):
-    pass
-
-
-class SignatureBad(SignatureException):
-    pass
-    
-
-class SignatureTimeout(SignatureException):
-    pass
+import authme.exc
 
 
 def time_provider():
@@ -72,6 +61,7 @@ class Hmac(object):
         self.__hashalg = hashalg
 
     def sign(self, *args):
+        # Rely on the alg for key stretching. Not in this scope.
         """HMAC that uses multiple passes for key stretching.
 
         *args       arglist     arguments to be hashed
@@ -79,14 +69,10 @@ class Hmac(object):
         """
         h = hmac.new(self.__secret, None, self.__hashalg)
 
-        items = []
         for arg in args:
-            items.append(arg)
-            
-        for i in range(self.__passes):
-            for item in items:
-                h.update(item)
-                # print(item)
+            if arg:
+                h.update(arg)
+
         return h.digest()
 
     def challenge(self, challenge, *args):
@@ -103,7 +89,7 @@ class Hmac(object):
         if self.challenge(sig, *args):
             return True
         else:
-            raise SignatureBad("Incorrect HMAC challenge.")
+            raise authme.exc.SignatureBad("Incorrect HMAC challenge.")
 
 
 class TimedHmac(Hmac):
@@ -143,26 +129,7 @@ class TimedHmac(Hmac):
         delta = now - ts
 
         if abs(delta) > self._expiry:
-            raise SignatureTimeout("Signature it too old.")
+            raise authme.exc.SignatureTimeout("Signature it too old.")
 
         chal = Hmac.sign(self, str(ts).encode(), *args)
         return sig == chal
-
-
-
-# Tests
-# =====
-import unittest
-
-class HmacTests(unittest.TestCase):
-    # Not really tests but better than nothing!
-    def test_temp(self):
-        import whmac
-
-        h = whmac.Hmac(b'12345')
-        a = h.sign(b'1',b'2',b'3')
-        assert h.verify(a, b'1',b'2',b'3')
-
-        h = whmac.TimedHmac(b'12345', expiry=1)
-        a = h.sign(b'1',b'2',b'3')
-        assert h.verify(a, b'1',b'2',b'3')
