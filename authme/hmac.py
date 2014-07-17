@@ -69,9 +69,10 @@ class Hmac(object):
         """
         h = hmac.new(self.__secret, None, self.__hashalg)
 
-        for arg in args:
-            if arg:
-                h.update(arg)
+        for _ in range(self.__passes):
+            for arg in args:
+                if arg:
+                    h.update(arg)
 
         return h.digest()
 

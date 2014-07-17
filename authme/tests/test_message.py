@@ -164,8 +164,9 @@ class TestJsonMessage(unittest.TestCase):
                                          signer=authme.hmac.Hmac(b'12345'),
                                          signing_params=(b'signature_namespace',))
         self.assertEqual(message.send(),
-            (b'{"Zm9v":"YmFy"}', None, b'\x12r%\xa5O\xad\xfc\xad\x91\x11\xd6x5\xc3\xa3\xaci\xedR{\xf7\xbfK\n\x7fe\x14\xbd\xd3\xcf\xc3\xe2'))
-
+            (b'{"Zm9v":"YmFy"}',
+            None,
+            b'\xf2\xffS\xce\xd2\xecre\x8a\xef\xbf\xe7~P^\x82D\xd1\xd4\xa5\xcb\xbaWT\x97;\xe6\xd4M\xae\t\n'))
 
         message = authme.message.JsonMessage(signer=authme.hmac.Hmac(b'12345'))
         self.assertEqual(message.receive(b'{"Zm9v":"YmFy"}', None, b'\x7f\x80o(\x8b,\xa6|\xb4w\x80o\xcb\xa2\xf0:\xd7\xf8\x8b\xee"3o\xbe\x17~{TAj\xbe\xf9'),
@@ -174,7 +175,9 @@ class TestJsonMessage(unittest.TestCase):
         message = authme.message.JsonMessage(signer=authme.hmac.Hmac(b'12345'),
                                          signing_params=(b'signature_namespace',))
         self.assertEqual(
-            message.receive(b'{"Zm9v":"YmFy"}', None, b'\x12r%\xa5O\xad\xfc\xad\x91\x11\xd6x5\xc3\xa3\xaci\xedR{\xf7\xbfK\n\x7fe\x14\xbd\xd3\xcf\xc3\xe2'),
+            message.receive(b'{"Zm9v":"YmFy"}',
+                            None,
+                            b'\xf2\xffS\xce\xd2\xecre\x8a\xef\xbf\xe7~P^\x82D\xd1\xd4\xa5\xcb\xbaWT\x97;\xe6\xd4M\xae\t\n'),
                          {b'foo': b'bar'})
 
     def test_message_cipher(self):
@@ -247,7 +250,7 @@ class TestJsonMessage(unittest.TestCase):
         self.assertEqual(message.send(),
                          (b'\xc3r\xb9\x8ce\xd4\xe8Fv\xe3\xfa\xd3\xc7\xbb\x05C',
                           b'"\x87{*\xadl\xe5\xd7d\xf8j\xfd\xd4\xd7\x1es',
-                          b'\xb1\xcbs\xe9\x04\x00\x1c\x8d&Yh\xd8\xd5\\\xc6\x1c\x06\xc3\xe0w\xe3\x03\xc0-\xa2&\xa9\xe1\xc1j\xfa\xb2'))
+                          b'\xf4\xd8\xf8k\x93\x8a5\x89\x1e\x82\xc2\xa7\xe11Z\xe36G\xd6X\x06Z,\xda\xe3\xb3\xd0\xbbd~\xab\xc6'))
 
         message = authme.message.JsonMessage(
                                     signer=authme.hmac.Hmac(b'12345'),
@@ -264,7 +267,7 @@ class TestJsonMessage(unittest.TestCase):
         self.assertEqual(message.receive(
                             b'\xc3r\xb9\x8ce\xd4\xe8Fv\xe3\xfa\xd3\xc7\xbb\x05C',
                             b'"\x87{*\xadl\xe5\xd7d\xf8j\xfd\xd4\xd7\x1es',
-                            b'\xb1\xcbs\xe9\x04\x00\x1c\x8d&Yh\xd8\xd5\\\xc6\x1c\x06\xc3\xe0w\xe3\x03\xc0-\xa2&\xa9\xe1\xc1j\xfa\xb2'),
+                            b'\xf4\xd8\xf8k\x93\x8a5\x89\x1e\x82\xc2\xa7\xe11Z\xe36G\xd6X\x06Z,\xda\xe3\xb3\xd0\xbbd~\xab\xc6'),
                         b'payload')
 
 
